@@ -52,6 +52,7 @@ use super::Error;
 use super::store::SnapshotStore;
 use super::latch::{Latches, Lock};
 use super::super::metrics::*;
+use super::super::super::raftstore::store::engine::IterOption;
 
 // TODO: make it configurable.
 pub const GC_BATCH_SIZE: usize = 512;
@@ -411,6 +412,29 @@ fn process_read(cid: u64, mut cmd: Command, ch: SendCh<Msg>, snapshot: Box<Snaps
             match snapshot.get(key) {
                 Ok(val) => ProcessResult::Value { value: val },
                 Err(e) => ProcessResult::Failed { err: StorageError::from(e) },
+            }
+        }
+        Command::RawScan { ref start_key, ref end_key, limit, .. } => {
+            let mut pairs = vec![];
+            let mut cursor = snapshot.iter(IterOption::default(), ScanMode::Forward).unwrap();
+            let raw_endkey = &end_key.raw().unwrap();
+            match cursor.seek(start_key) {
+                Err(e) => panic!(e),
+                Ok(false) => ProcessResult::MultiKvpairs { pairs: pairs },
+                Ok(true) => {
+                    while pairs.len() < limit as usize {
+                        if !cursor.valid() {
+                            break;
+                        }
+                        if cursor.key() >= raw_endkey {
+                            break;
+                        }
+
+                        pairs.push(Ok((cursor.key().to_vec(), cursor.value().to_vec())));
+                        cursor.next();
+                    }
+                    ProcessResult::MultiKvpairs { pairs: pairs }
+                }
             }
         }
         _ => panic!("unsupported read command"),

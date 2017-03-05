@@ -139,6 +139,12 @@ pub enum Command {
         keys: Vec<Key>,
     },
     RawGet { ctx: Context, key: Key },
+    RawScan {
+        ctx: Context,
+        start_key: Key,
+        end_key: Key,
+        limit: u64,
+    },
 }
 
 impl Display for Command {
@@ -207,6 +213,14 @@ impl Display for Command {
             Command::RawGet { ref ctx, ref key } => {
                 write!(f, "kv::command::rawget {:?} | {:?}", key, ctx)
             }
+            Command::RawScan { ref ctx, ref start_key, ref end_key, limit } => {
+                write!(f,
+                       "kv::command::rawscan: start_key {:?}, end_key {:?}, limit:{:?} | {:?}",
+                       start_key,
+                       end_key,
+                       limit,
+                       ctx)
+            }
         }
     }
 }
@@ -226,7 +240,8 @@ impl Command {
             Command::BatchGet { .. } |
             Command::Scan { .. } |
             Command::ScanLock { .. } |
-            Command::RawGet { .. } => true,
+            Command::RawGet { .. } |
+            Command::RawScan { .. } => true,
             Command::ResolveLock { ref keys, .. } |
             Command::Gc { ref keys, .. } => keys.is_empty(),
             _ => false,
@@ -246,6 +261,7 @@ impl Command {
             Command::ResolveLock { .. } => "resolve_lock",
             Command::Gc { .. } => CMD_TAG_GC,
             Command::RawGet { .. } => "raw_get",
+            Command::RawScan { .. } => "raw_scan",
         }
     }
 
@@ -261,7 +277,8 @@ impl Command {
             Command::Commit { lock_ts, .. } => lock_ts,
             Command::ScanLock { max_ts, .. } => max_ts,
             Command::Gc { safe_point, .. } => safe_point,
-            Command::RawGet { .. } => 0,
+            Command::RawGet { .. } |
+            Command::RawScan { .. } => 0,
         }
     }
 
@@ -277,7 +294,8 @@ impl Command {
             Command::ScanLock { ref ctx, .. } |
             Command::ResolveLock { ref ctx, .. } |
             Command::Gc { ref ctx, .. } |
-            Command::RawGet { ref ctx, .. } => ctx,
+            Command::RawGet { ref ctx, .. } |
+            Command::RawScan { ref ctx, .. } => ctx,
         }
     }
 
@@ -293,7 +311,8 @@ impl Command {
             Command::ScanLock { ref mut ctx, .. } |
             Command::ResolveLock { ref mut ctx, .. } |
             Command::Gc { ref mut ctx, .. } |
-            Command::RawGet { ref mut ctx, .. } => ctx,
+            Command::RawGet { ref mut ctx, .. } |
+            Command::RawScan { ref mut ctx, .. } => ctx,
         }
     }
 }
@@ -595,6 +614,24 @@ impl Storage {
         };
         try!(self.send(cmd, StorageCb::SingleValue(callback)));
         RAWKV_COMMAND_COUNTER_VEC.with_label_values(&["get"]).inc();
+        Ok(())
+    }
+
+    pub fn async_raw_scan(&self,
+                          ctx: Context,
+                          start_key: Vec<u8>,
+                          end_key: Vec<u8>,
+                          limit: u64,
+                          callback: Callback<Vec<Result<KvPair>>>)
+                          -> Result<()> {
+        let cmd = Command::RawScan {
+            ctx: ctx,
+            start_key: Key::from_encoded(start_key),
+            end_key: Key::from_encoded(end_key),
+            limit: limit,
+        };
+        try!(self.send(cmd, StorageCb::KvPairs(callback)));
+        RAWKV_COMMAND_COUNTER_VEC.with_label_values(&["raw_scan"]).inc();
         Ok(())
     }
 

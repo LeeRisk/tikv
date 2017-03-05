@@ -19,7 +19,8 @@ use kvproto::kvrpcpb::{CmdGetResponse, CmdScanResponse, CmdPrewriteResponse, Cmd
                        CmdBatchRollbackResponse, CmdCleanupResponse, CmdBatchGetResponse,
                        CmdScanLockResponse, CmdResolveLockResponse, CmdGCResponse, Request,
                        Response, MessageType, KvPair as RpcKvPair, KeyError, LockInfo, Op};
-use kvproto::kvrpcpb::{CmdRawGetResponse, CmdRawPutResponse, CmdRawDeleteResponse};
+use kvproto::kvrpcpb::{CmdRawGetResponse, CmdRawPutResponse, CmdRawDeleteResponse,
+                       CmdRawScanResponse};
 use kvproto::msgpb;
 use kvproto::errorpb::{Error as RegionError, ServerIsBusy};
 use storage::{Engine, Storage, Key, Value, KvPair, Mutation, Callback, Result as StorageResult,
@@ -161,6 +162,21 @@ impl StoreHandler {
             .map_err(Error::Storage)
     }
 
+    fn on_raw_scan(&self, mut msg: Request, on_resp: OnResponse) -> Result<()> {
+        if !msg.has_cmd_raw_scan_req() {
+            return Err(box_err!("msg doesn't contain a CmdRawScanRequest"));
+        }
+        let req = msg.take_cmd_raw_scan_req();
+        let cb = self.make_cb(StoreHandler::cmd_raw_scan_done, on_resp);
+        self.store
+            .async_raw_scan(msg.take_context(),
+                            req.get_start_key().to_vec(),
+                            req.get_end_key().to_vec(),
+                            req.get_limit(),
+                            cb)
+            .map_err(Error::Storage)
+    }
+
     fn on_scan_lock(&self, mut msg: Request, on_resp: OnResponse) -> Result<()> {
         if !msg.has_cmd_scan_lock_req() {
             return Err(box_err!("msg doesn't contain a CmdScanLockRequest"));
@@ -266,6 +282,13 @@ impl StoreHandler {
         let mut batch_get_resp = CmdBatchGetResponse::new();
         batch_get_resp.set_pairs(RepeatedField::from_vec(extract_kv_pairs(kvs)));
         resp.set_cmd_batch_get_resp(batch_get_resp);
+    }
+
+    fn cmd_raw_scan_done(kvs: StorageResult<Vec<StorageResult<KvPair>>>, resp: &mut Response) {
+        resp.set_field_type(MessageType::CmdRawScan);
+        let mut raw_scan_resp = CmdRawScanResponse::new();
+        raw_scan_resp.set_pairs(RepeatedField::from_vec(extract_kv_pairs(kvs)));
+        resp.set_cmd_raw_scan_resp(raw_scan_resp);
     }
 
     fn cmd_prewrite_done(results: StorageResult<Vec<StorageResult<()>>>, resp: &mut Response) {
@@ -379,6 +402,7 @@ impl StoreHandler {
             MessageType::CmdRawGet => self.on_raw_get(req, on_resp),
             MessageType::CmdRawPut => self.on_raw_put(req, on_resp),
             MessageType::CmdRawDelete => self.on_raw_delete(req, on_resp),
+            MessageType::CmdRawScan => self.on_raw_scan(req, on_resp),
         } {
             // TODO: should we return an error and tell the client later?
             error!("Some error occur err[{:?}]", e);

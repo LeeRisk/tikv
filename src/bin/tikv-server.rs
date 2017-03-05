@@ -355,12 +355,12 @@ fn get_rocksdb_cf_option(config: &toml::Value,
         block_base_opts.set_whole_key_filtering(whole_key_filtering);
     }
     opts.set_block_based_table_factory(&block_base_opts);
-
     let cpl = get_toml_string(config,
                               (prefix.clone() + "compression-per-level").as_str(),
                               Some("lz4:lz4:lz4:lz4:lz4:lz4:lz4".to_owned()));
     let per_level_compression = util::config::parse_rocksdb_per_level_compression(&cpl).unwrap();
     opts.compression_per_level(&per_level_compression);
+
 
     let write_buffer_size = get_toml_int(config,
                                          (prefix.clone() + "write-buffer-size").as_str(),
